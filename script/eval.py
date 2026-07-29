@@ -2,9 +2,9 @@ import argparse
 import logging
 import os
 import sys
-sys.path.append("/home/maiweijian/project/NeuroFlow")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/eval")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/eval")
 
 import clip
 import numpy as np
@@ -188,8 +188,8 @@ def get_model(model_name):
         weights = EfficientNet_B1_Weights.DEFAULT
         model = create_feature_extractor(efficientnet_b1(weights=weights), return_nodes=['avgpool'])
     elif model_name == 'SwAV':
-        model = torch.hub.load('/home/maiweijian/.cache/torch/hub/facebookresearch-swav-06b1b7c', 
-                               'resnet50', source='local')
+        model = torch.hub.load('facebookresearch/swav:06b1b7c', 
+                               'resnet50')
         model = create_feature_extractor(model, return_nodes=['avgpool'])
     else:
         raise ValueError(f"Unsupported model: {model_name}")
@@ -326,7 +326,7 @@ args = get_args()
 
 def main():
     sub = 1
-    args.eval_path = "/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow/evals"
+    args.eval_path = "/u/fdammeier/generations/evals"
 
     args.model_name = f"fm-s{sub}-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/sub{sub}"
     args.setting_name = f"single_s{sub}"
@@ -334,15 +334,17 @@ def main():
     print(args)
 
     ## change path
-    all_images = torch.load("/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/nsd/subj01/all_images.pt")
-    all_clip_voxels = torch.load("/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/BrainSyn/evals/all_clipvoxels.pt")
+    all_images = torch.load("/u/fdammeier/data/NeuroFlow/all_images.pt")
+    # all_clip_voxels = torch.load("/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/BrainSyn/evals/all_clipvoxels.pt") TODO: What is this?
+    all_clip_voxels = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_zfmri_raw.pt")
+
 
     all_recon_img = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_img.pt")
     all_recon_blurry = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_blurry.pt")
     all_recon_f2i = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_f2i.pt")
     all_recon_fmri = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_recon_fmri.pt")
     
-    all_zfmri_raw = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_zfmri_raw.pt")
+    all_zfmri_raw = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_zfmri_raw.pt") # This is being saved as "all_clipvoxels" in generate.py
     all_zfmri_recon = torch.load(f"{args.eval_path}/{args.model_name}/{args.setting_name}_all_zfmri_syn.pt")
     
     #! optional: add blurry image to improve pixel-level performance
@@ -350,7 +352,7 @@ def main():
     
     #! optional: denormalize z-score data and calculate voxel-level metrics with test scale data -> fair comparisons with SynBrain
     ## Download test scale data at https://huggingface.co/MichaelMaiii/NeuroFlow/tree/main/evals/voxel-level
-    data_path = "/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/"
+    data_path = "/u/fdammeier/data/NeuroFlow"
     stats_path = os.path.join(
         data_path, f"nsd/subj0{sub}/nsd_train_fmri_voxel_stats_sub{sub}.pt"
     )

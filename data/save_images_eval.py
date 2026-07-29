@@ -4,7 +4,7 @@ from torchvision import transforms
 
 sub = 1  
 mode = "test"  
-dir = "/home/bingxing2/ailab/group/ai4neuro/BrainVL/data/processed_data"
+dir = "/u/fdammeier/data/NeuroFlow/nsd"
 data = np.load(f'{dir}/subj0{sub}/nsd_{mode}_stim_sub{sub}.npy').astype(np.uint8)
 
 transform = transforms.Compose([
@@ -21,7 +21,7 @@ for img in data:
 
 all_images_tensor = torch.stack(all_images, dim=0)
 
-eval_path = "/home/bingxing2/ailab/group/ai4neuro/BrainVL/BrainSyn/evals"
+eval_path = "/u/fdammeier/data/NeuroFlow"
 save_path = f"{eval_path}/all_images.pt"
 torch.save(all_images_tensor, save_path)
 

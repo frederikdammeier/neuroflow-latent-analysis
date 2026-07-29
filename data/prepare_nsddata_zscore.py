@@ -1,5 +1,5 @@
 import os
-os.chdir('/home/bingxing2/ailab/group/ai4neuro/BrainVL/data')
+os.chdir('/u/fdammeier/data/NeuroFlow')
 import sys
 import numpy as np
 import h5py
@@ -65,7 +65,7 @@ def loadmat(filename):
     data = spio.loadmat(filename, struct_as_record=False, squeeze_me=True)
     return _check_keys(data)
 
-stim_order_f = 'nsd_expdesign.mat'
+stim_order_f = 'nsddata/experiments/nsd/nsd_expdesign.mat'
 stim_order = loadmat(stim_order_f)
 
 ## Selecting ids for training and test data
@@ -151,7 +151,7 @@ np.save(f"nsd/subj{sub:02d}/nsd_train_global_mean_scaled_sub{sub}.npy", train_me
 np.save(f"nsd/subj{sub:02d}/nsd_train_global_std_scaled_sub{sub}.npy", train_std)
 print(f"Saved train global mean/std (scaled betas) for sub{sub}: count={train_count}")
 
-f_stim = h5py.File('nsd_stimuli.hdf5', 'r')
+f_stim = h5py.File('nsddata_stimuli/stimuli/nsd/nsd_stimuli.hdf5', 'r')
 stim = f_stim['imgBrick'][:]
 
 print("Stimuli are loaded: ", stim.shape)

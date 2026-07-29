@@ -1,8 +1,8 @@
 import copy
 import os
 import sys
-sys.path.append('/home/maiweijian/project/NeuroFlow/script')
-sys.path.append('/home/maiweijian/project/NeuroFlow/script/vae')
+sys.path.append('/u/fdammeier/repositories/NeuroFlow/script/')
+sys.path.append('/u/fdammeier/repositories/NeuroFlow/script/vae')
 import torch
 import torch.nn as nn
 import argparse
@@ -20,10 +20,10 @@ from datetime import datetime
 import torchvision.utils as vutils
 import timm
 
-from utils import *
-from dataset import *
-from mind_utils import *
-from neurovae import *
+from vae_utils import get_neurovae_ddconfig, count_params, seed_everything, check_loss , save_fmri_recon_image, evaluate_fmri_reconstruction
+from dataset import train_nsd_dataloader, val_nsd_dataloader
+from mind_utils import topk, batchwise_cosine_similarity
+from neurovae import NeuroVAE_P
 
 
 def log_recon_images(sample_image_ema, sample_image_test, epoch):

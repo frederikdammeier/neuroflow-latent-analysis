@@ -1,0 +1,62 @@
+#!/bin/bash -l
+# Standard output and error:
+#SBATCH -o ./logs/job.out.%j
+#SBATCH -e ./logs/job.err.%j
+# Initial working directory:
+#SBATCH -D ./
+# Job name
+#SBATCH -J neuroflow_gpu
+#
+#SBATCH --ntasks=1
+#SBATCH --constraint="gpu"
+#
+# --- default case: use a single GPU on a shared node ---
+#SBATCH --gres=gpu:a100:1
+#SBATCH --cpus-per-task=18
+#SBATCH --mem=125000
+#
+# --- uncomment to use 2 GPUs on a shared node ---
+# #SBATCH --gres=gpu:a100:2
+# #SBATCH --cpus-per-task=36
+# #SBATCH --mem=250000
+#
+# --- uncomment to use 4 GPUs on a full node ---
+# #SBATCH --gres=gpu:a100:4
+# #SBATCH --cpus-per-task=72
+# #SBATCH --mem=500000
+#
+#SBATCH --mail-type=all
+#SBATCH --mail-user=kv99fuda@studserv.uni-leipzig.de
+#SBATCH --time=4:00:00
+
+module purge
+module load intel/21.2.0 impi/2021.2 cuda/12.8
+
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+cd /u/fdammeier/repositories/NeuroFlow/script/vae
+
+# Activate venv
+source /u/fdammeier/repositories/NeuroFlow/venv/bin/activate
+
+# Run the program:
+srun python train_neurovae.py \
+    --seed=1024 \
+    --subject=1 \
+    --batch_size=64 \
+    --test_batch_size=300 \
+    --num_epochs=30 \
+    --model_name="neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj" \
+    --hidden_dim=1664 \
+    --linear_dim=1024 \
+    --embed_dim=1664 \
+    --clip_weight=1000 \
+    --cycle_weight=1000 \
+    --kl_weight=0.001 \
+    --base_lr=1e-4 \
+    --ckpt_interval=1 \
+    --data_path="/u/fdammeier/data/NeuroFlow" \
+    --save_path="/u/fdammeier/checkpoints" \
+    --zscore \
+    --wandb_log False

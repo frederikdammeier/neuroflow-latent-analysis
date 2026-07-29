@@ -1,0 +1,44 @@
+#!/bin/bash -l
+# Standard output and error:
+#SBATCH -o ./logs/job.out.%j
+#SBATCH -e ./logs/job.err.%j
+# Initial working directory:
+#SBATCH -D ./
+# Job name
+#SBATCH -J neuroflow_gpu
+#
+#SBATCH --ntasks=1
+#SBATCH --constraint="gpu"
+#
+# --- default case: use a single GPU on a shared node ---
+#SBATCH --gres=gpu:a100:1
+#SBATCH --cpus-per-task=18
+#SBATCH --mem=125000
+#
+# --- uncomment to use 2 GPUs on a shared node ---
+# #SBATCH --gres=gpu:a100:2
+# #SBATCH --cpus-per-task=36
+# #SBATCH --mem=250000
+#
+# --- uncomment to use 4 GPUs on a full node ---
+# #SBATCH --gres=gpu:a100:4
+# #SBATCH --cpus-per-task=72
+# #SBATCH --mem=500000
+#
+#SBATCH --mail-type=all
+#SBATCH --mail-user=kv99fuda@studserv.uni-leipzig.de
+#SBATCH --time=12:00:00
+
+module purge
+module load intel/21.2.0 impi/2021.2 cuda/12.8
+
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+cd /u/fdammeier/repositories/NeuroFlow/script
+
+# Activate venv
+source /u/fdammeier/repositories/NeuroFlow/venv/bin/activate
+
+# Run the program:
+srun python generate.py

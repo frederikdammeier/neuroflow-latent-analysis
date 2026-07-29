@@ -1,0 +1,31 @@
+#!/bin/bash -l
+# Standard output and error:
+#SBATCH -o ./logs/job.out.%j
+#SBATCH -e ./logs/job.err.%j
+# Initial working directory:
+#SBATCH -D ./
+# Job Name:
+#SBATCH -J neuroflow_cpu
+#
+# Number of MPI Tasks, e.g. 8:
+#SBATCH --ntasks=2
+# Memory usage [MB] of the job is required, e.g. 3000 MB per task:
+#SBATCH --mem=8000
+#
+#SBATCH --mail-type=none
+#SBATCH --mail-user=kv99fuda@studserv.uni-leipzig.de
+#
+# Wall clock limit (max. is 24 hours):
+#SBATCH --time=00:30:00
+
+# Load compiler and MPI modules (must be the same as used for compiling the code)
+# module purge
+# module load intel/21.2.0 impi/2021.2
+
+cd /u/fdammeier/repositories/NeuroFlow
+
+# Activate venv
+source venv/bin/activate
+
+# Run the program:
+srun python data/prepare_nsddata_zscore.py --subj 2

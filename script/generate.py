@@ -1,12 +1,12 @@
 import os
 import sys
 
-sys.path.append("/home/maiweijian/project/NeuroFlow/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/xfm/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/vae/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/sdxl/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/sdxl/generative_models")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/xfm/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/vae/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/sdxl/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models")
 import argparse
 
 import numpy as np
@@ -18,7 +18,7 @@ from accelerate.utils import set_seed
 from sit import SiT
 from dataset import val_nsd_dataloader
 from samplers import *
-from utils import *
+from vae_utils import *
 from mind_utils import batchwise_cosine_similarity, topk
 
 import signal
@@ -170,7 +170,7 @@ def compute_retrieval_bwd(x_clip, target, device):
 
 
 #################################################################################
-#                                  Training Loop                                #
+#                                  Generation Loop                              #
 #################################################################################
 
 def main(args):    
@@ -231,6 +231,7 @@ def main(args):
     all_clipvoxels = None
     all_sample_fmri = None
     all_sample_clip = None
+    all_z_fmri = None
     all_clipvoxels_recon = None
     all_mse_disc = []
     count_img = 0
@@ -240,8 +241,15 @@ def main(args):
             x_fmri = x_fmri.float().unsqueeze(1).to(device)
             z_clip = z_clip.float().to(device)
 
+        
             z_fmri, z_fmri_clip = brain_enc.encode(x_fmri, sample=False)
-                
+
+            # Stack the raw z_fmri for latent space analysis
+            if all_z_fmri is None:
+                all_z_fmri = z_fmri.cpu()
+            else:
+                all_z_fmri = torch.vstack((all_z_fmri, z_fmri.cpu()))
+
             # #! retrieval -> 300 batch sizes
             compute_retrieval(z_fmri_clip.clone(), z_clip.clone(), device)
             if all_clipvoxels is None:
@@ -347,10 +355,19 @@ def main(args):
     # saving
     print(all_recon_f2i.shape)
     setting_name = args.setting_name
+
+    # Latents
+    torch.save(all_z_fmri,f"{save_path}/{setting_name}_all_zfmri.pt")
+    torch.save(all_sample_fmri,f"{save_path}/{setting_name}_all_sample_fmri.pt")
+    torch.save(all_sample_clip,f"{save_path}/{setting_name}_all_sample_clip.pt")
+
+    # Reconstructions
     torch.save(all_recon_f2i,f"{save_path}/{setting_name}_all_recon_f2i.pt")
     torch.save(all_recon_img,f"{save_path}/{setting_name}_all_recon_img.pt")
     torch.save(all_recon_fmri,f"{save_path}/{setting_name}_all_recon_fmri.pt")
     torch.save(all_recon_i2f,f"{save_path}/{setting_name}_all_recon_i2f.pt")
+    
+    # Clipvoxels
     torch.save(all_clipvoxels,f"{save_path}/{setting_name}_all_zfmri_raw.pt")
     torch.save(all_clipvoxels_recon,f"{save_path}/{setting_name}_all_zfmri_syn.pt")
     print(f"saved {args.model_name} outputs!")
@@ -358,10 +375,10 @@ def main(args):
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Evaluation")
-    parser.add_argument("--ckpt-path", type=str, default="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow/train_logs")
-    parser.add_argument("--save-path", type=str, default="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow")
+    parser.add_argument("--ckpt-path", type=str, default="/u/fdammeier/checkpoints/train_logs")
+    parser.add_argument("--save-path", type=str, default="/u/fdammeier/generations")
     parser.add_argument("--encoder", type=str, default="vae", choices=["mlp", "conv", "vae"])
-    parser.add_argument("--vae-path", type=str, default="neurovae-nsd-s1-vs1-bs64-d1664-zscore-v10-cycle-proj")
+    parser.add_argument("--vae-path", type=str, default="neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj")
     parser.add_argument("--setting-name", type=str, default="single_s1")
     parser.add_argument("--subject", type=int, default=1) #!记得改
     parser.add_argument("--hidden-dim", type=int, default=1664) #!记得改
@@ -381,7 +398,7 @@ def parse_args(input_args=None):
 
     # dataset
     parser.add_argument("--test-batch-size", type=int, default=100)
-    parser.add_argument("--data-path", type=str, default="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/")
+    parser.add_argument("--data-path", type=str, default="/u/fdammeier/data/NeuroFlow")
 
     # seed
     parser.add_argument("--seed", type=int, default=0)

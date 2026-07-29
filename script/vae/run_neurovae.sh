@@ -19,9 +19,10 @@ python train_neurovae.py \
     --kl_weight=0.001 \
     --base_lr=1e-4 \
     --ckpt_interval=1 \
-    --data_path="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data" \
-    --save_path="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow" \
-    --zscore
+    --data_path="/u/fdammeier/data/NeuroFlow" \
+    --save_path="/u/fdammeier/checkpoints" \
+    --zscore \
+    --wandb_log False
 
 # Optional flags (uncomment and append to the command above if needed):
 #   --resume --resume_id="wandb_run_id"

@@ -73,8 +73,8 @@ model:
             params:
               arch: ViT-bigG-14
               # version: laion2b_s39b_b160k
-              version: /mnt/shared-storage-user/ai4neuro-shared/yaozhouheng/MindEyeV2/open_clip_pytorch_model.bin
-              cache_dir: /mnt/shared-storage-user/ai4neuro-shared/yaozhouheng/MindEyeV2
+              version: /u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_model.bin
+              cache_dir: /u/fdammeier/checkpoints/mindeyev2
               freeze: True
               repeat_to_max_len: False
               output_tokens: True

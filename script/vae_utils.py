@@ -363,7 +363,7 @@ def load_mindeye2(args):
     count_params(model.diffusion_prior)
     count_params(model)
 
-    ckpt_path = f"/mnt/shared-storage-gpfs2/ai4neuro-share/wujiamin/mindeye2_train_logs/{args.mindeye_ckpt}/last.pth"
+    ckpt_path = f"/u/fdammeier/checkpoints/mindeyev2/train_logs/{args.mindeye_ckpt}/last.pth"
     print(f"Loading {ckpt_path}......")
     
     checkpoint = torch.load(ckpt_path, map_location='cpu')
@@ -409,7 +409,7 @@ def mindeyev2_blurry(model, x):
         layers_per_block=2,
         sample_size=256,
     )
-    ckpt = torch.load('/mnt/shared-storage-user/ai4neuro-shared/yaozhouheng/MindEyeV2/sd_image_var_autoenc.pth')
+    ckpt = torch.load('/u/fdammeier/checkpoints/mindeyev2/sd_image_var_autoenc.pth')
     autoenc.load_state_dict(ckpt)
     autoenc.eval()
     autoenc.requires_grad_(False)
@@ -441,7 +441,7 @@ def load_pretrained_sdxl_unclip():
     from sdxl.generative_models.sgm.models.diffusion import DiffusionEngine
 
     # prep unCLIP
-    config = OmegaConf.load("/home/maiweijian/project/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml")
+    config = OmegaConf.load("/u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml")
     config = OmegaConf.to_container(config, resolve=True)
     unclip_params = config["model"]["params"]
     network_config = unclip_params["network_config"]
@@ -467,7 +467,7 @@ def load_pretrained_sdxl_unclip():
     diffusion_engine.eval().requires_grad_(False)
     diffusion_engine.to(device)
 
-    ckpt_path = f'/mnt/shared-storage-user/ai4neuro-shared/yaozhouheng/MindEyeV2/unclip6_epoch0_step110000.ckpt'
+    ckpt_path = f'/u/fdammeier/checkpoints/mindeyev2/unclip6_epoch0_step110000.ckpt'
     ckpt = torch.load(ckpt_path, map_location='cuda')
     diffusion_engine.load_state_dict(ckpt['state_dict'])
 

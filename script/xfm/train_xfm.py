@@ -1,12 +1,12 @@
-from sklearn.decomposition import PCA
+# from sklearn.decomposition import PCA
 # from umap._umap import UMAP
 import os
 import sys
-sys.path.append("/home/maiweijian/project/NeuroFlow/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/sdxl/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/vae/")
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/sdxl/generative_models")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/sdxl/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/vae/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models")
 from generative_models.sgm.modules.encoders.modules import FrozenOpenCLIPImageEmbedder # bigG embedder
 import argparse
 import copy
@@ -37,9 +37,9 @@ import wandb
 import math
 from torchvision.utils import make_grid
 from torchvision.transforms import Normalize
-from dataset import *
+from dataset import train_nsd_dataloader, val_nsd_dataloader
 from mind_utils import *
-from utils import *
+from vae_utils import load_pretrained_sdxl_unclip, sdxl_recon_combined_all, load_neurovae_v10_proj, save_fmri_recon_image, evaluate_fmri_reconstruction
 from neurovae import *
 
 from scipy.spatial.distance import euclidean

@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.append("/home/maiweijian/project/NeuroFlow/script/")
+sys.path.append("/u/fdammeier/repositories/NeuroFlow/script/")
 import argparse
 import numpy as np
 import torch
@@ -8,7 +8,7 @@ from torchvision import transforms
 from accelerate.utils import set_seed
 
 from dataset import val_nsd_dataloader
-from utils import load_mindeye2, mindeyev2_blurry, count_params, requires_grad
+from vae_utils import load_mindeye2, mindeyev2_blurry, count_params, requires_grad
 
 import signal
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -77,18 +77,18 @@ def main(args):
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Evaluation")
-    parser.add_argument("--ckpt-path", type=str, default="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow/train_logs")
-    parser.add_argument("--save-path", type=str, default="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/NeuroFlow")
+    parser.add_argument("--ckpt-path", type=str, default="/u/fdammeier/checkpoints/train_logs")
+    parser.add_argument("--save-path", type=str, default="/u/fdammeier/generations")
     parser.add_argument("--encoder", type=str, default="vae", choices=["mlp", "conv", "vae"])
-    parser.add_argument("--vae-path", type=str, default="neurovae-nsd-s7-vs7-bs64-d1664-zscore-v10-cycle")
-    parser.add_argument("--setting-name", type=str, default="single_s7")
-    parser.add_argument("--subject", type=int, default=7) #!记得改
+    parser.add_argument("--vae-path", type=str, default="neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj")
+    parser.add_argument("--setting-name", type=str, default="single_s1")
+    parser.add_argument("--subject", type=int, default=1) #!记得改
     parser.add_argument("--hidden-dim", type=int, default=1664) #!记得改
 
     # nohup python generate_neuroflow_V10_reverse.py > logs/ms_d12_h13_s1_cos_reverse_woclip.log 2>&1 &
     parser.add_argument("--prediction", type=str, default="v")
-    parser.add_argument("--model-name", type=str, default="fm-s7-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse")
-    parser.add_argument("--save-name", type=str, default="fm-s7-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse")
+    parser.add_argument("--model-name", type=str, default="fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj")
+    parser.add_argument("--save-name", type=str, default="fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj")
     parser.add_argument("--num-step", type=int, default=20)
     parser.add_argument("--sample",  action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--zscore",  action=argparse.BooleanOptionalAction, default=True)
@@ -100,7 +100,7 @@ def parse_args(input_args=None):
 
     # dataset
     parser.add_argument("--test-batch-size", type=int, default=100)
-    parser.add_argument("--data-path", type=str, default="/mnt/shared-storage-user/ai4sdata2-share/maiweijian/BrainVL/data/")
+    parser.add_argument("--data-path", type=str, default="/u/fdammeier/data/NeuroFlow")
 
     # seed
     parser.add_argument("--seed", type=int, default=0)
