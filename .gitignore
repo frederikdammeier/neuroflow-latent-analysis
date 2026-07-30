@@ -5,3 +5,7 @@ __pycache__/
 /.vscode
 
 *.pyc
+
+sample_data/*
+!sample_data/sample_data.ipynb
+

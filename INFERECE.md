@@ -107,6 +107,12 @@ are located in `/u/fdammeier/generations/evals/` under the respective project co
 
 are located in `/u/fdammeier/generations/evals/` under the respective project configuration. E.g. `fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/sub1/single_s1_all_recon_img.pt`
 
+# fMRI betas
+
+## Source
+
+- `/u/fdammeier/data/NeuroFlow/nsd/subj01/nsd_test_fmri_zscore_sub1.npy`
+
 
 
 
