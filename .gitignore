@@ -1,6 +1,7 @@
 /venv
 /logs
 /rdms
+/latent_analysis/nsdcode
 __pycache__/
 /.vscode
 
