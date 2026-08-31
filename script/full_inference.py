@@ -13,6 +13,7 @@ entrypoint to do everything.
 import random
 import numpy as np
 import torch
+from accelerate.utils import set_seed
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import Resize
 from tqdm import tqdm
@@ -21,7 +22,7 @@ import open_clip
 from PIL import Image
 
 from inference_utils import get_image_paths, CLIPImageDataset, load_pretrained_sdxl_unclip, \
-    unclip_recon, load_neurovae, begin_timed_block, end_timed_block
+    unclip_recon, load_neurovae, begin_timed_block, end_timed_block, preprocess_image_for_clip
 
 from vae_utils import requires_grad
 
@@ -36,7 +37,7 @@ messy.
 # Start by collecting relevant configs as constants, to be be extracted into a file
 # later on.
 # Generic
-SEED = 42
+SEED = 0 # same as in generate.py
 DEVICE = "cuda" # "cpu" or "cuda"
 ARTIFACTS_DIR = "/u/fdammeier/artifacts"
 
@@ -50,7 +51,7 @@ OPENCLIP_PRETRAINED = "/u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_mode
 
 # XFM
 XFM_CHECKPOINT_PATH = \
-    "/u/fdammeier/checkpoints/" + \
+    "/u/fdammeier/checkpoints/train_logs/" + \
     "fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt"
 
 # NeuroVAE
@@ -99,19 +100,30 @@ def encode_images_with_openclip(
     Encodes images using OpenCLIP to obtain embeddings.
     The original code in NeuroFlow uses 
     generative_models.sgm.modules.encoders.modules.FrozenOpenCLIPImageEmbedder
-    to obtain embeddings, but we use open_clip directly to retain full flexibility.
+    to obtain embeddings, but we use OpenCLIP directly to retain full flexibility.
     If there is unexpected behavior, double-check the configurations in the original code.
     """
     # Load OpenCLIP model
-    model, _, transforms = open_clip.create_model_and_transforms(
+    model, _, _ = open_clip.create_model_and_transforms(
         model_name,
         device=device,
         pretrained=pretrained
     )
+
+    # from generative_models.sgm.modules.encoders.modules.FrozenOpenCLIPImageEmbedder
+    model.register_buffer(
+        "mean", torch.Tensor([0.48145466, 0.4578275, 0.40821073]), persistent=False
+    )
+    model.register_buffer(
+        "std", torch.Tensor([0.26862954, 0.26130258, 0.27577711]), persistent=False
+    )
+
+    model.eval()
+
     del model.transformer # the text transformer is not needed for image embeddings
     model.visual.output_tokens = True
 
-    dataset = CLIPImageDataset(image_paths, transforms)
+    dataset = CLIPImageDataset(image_paths)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     cls_token_embeddings = []
@@ -119,15 +131,26 @@ def encode_images_with_openclip(
     print(f"Encoding {len(image_paths)} images with OpenCLIP model {model_name}...")
     for batch in tqdm(dataloader):
         batch = batch.to(device)
-        with torch.no_grad():
-            cls, img_tokens = model.visual(batch) # returns (cls_token, pos_tokens)
-            cls_token_embeddings.append(cls.cpu())
-            img_token_embeddings.append(img_tokens.cpu())
+
+        # replicates @autocast behavior from FrozenOpenCLIPImageEmbedder.forward()
+        with torch.no_grad(), torch.amp.autocast(
+            device,
+            dtype=torch.get_autocast_gpu_dtype(),
+            cache_enabled=torch.is_autocast_cache_enabled()
+        ):
+            preprocessed_batch = preprocess_image_for_clip(batch)
+            cls, img_tokens = model.visual(preprocessed_batch) # returns (cls_token, pos_tokens)
+
+            # FrozenOpenCLIPImageEmbedder.forward() would upcast cls to full precision, but we 
+            # keep it in the same precision as img_tokens for consistency.
+        
+        cls_token_embeddings.append(cls.cpu())
+        img_token_embeddings.append(img_tokens.cpu())
 
     cls_token_embeddings = torch.cat(cls_token_embeddings, dim=0)
     img_token_embeddings = torch.cat(img_token_embeddings, dim=0)
 
-    del model, transforms, dataset, dataloader # free up memory
+    del model, dataset, dataloader # free up memory
 
     return cls_token_embeddings, img_token_embeddings
 
@@ -229,7 +252,7 @@ def encode_fmri_with_neurovae(
         batch = batch.to(device)
         with torch.no_grad():
             z_fmri, z_fmri_clip = brain_enc.encode(batch)
-            del z_fmri_clip # we don't need the clip embeddings for now
+            del z_fmri_clip # we don't need the clip embeddings
             embeddings.append(z_fmri.cpu())
 
     del brain_enc, dataset, dataloader # free up memory
@@ -337,9 +360,7 @@ def main():
     """
     Main function to run the full inference pipeline based on the specified configurations.
     """
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
+    set_seed(SEED)
 
     # Load models and checkpoints as needed based on the toggles
     if ENCODE_IMAGES:
@@ -358,8 +379,14 @@ def main():
 
         # Save embeddings to artifacts directory
         os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-        torch.save(cls_embeddings, os.path.join(ARTIFACTS_DIR, "cls_embeddings.pt"))
-        torch.save(img_embeddings, os.path.join(ARTIFACTS_DIR, "img_embeddings.pt"))
+        torch.save(
+            cls_embeddings.to(torch.device('cpu')), 
+            os.path.join(ARTIFACTS_DIR, "cls_embeddings.pt")
+        )
+        torch.save(
+            img_embeddings.to(torch.device('cpu')), 
+            os.path.join(ARTIFACTS_DIR, "img_embeddings.pt")
+        )
 
         del cls_embeddings, img_embeddings # free up memory
         end_timed_block(block_title, t)
@@ -381,7 +408,10 @@ def main():
             device=DEVICE
         )
 
-        torch.save(neurovae_embeddings, os.path.join(ARTIFACTS_DIR, "neurovae_embeddings.pt"))
+        torch.save(
+            neurovae_embeddings.to(torch.device('cpu')), 
+            os.path.join(ARTIFACTS_DIR, "neurovae_embeddings.pt")
+        )
         end_timed_block(block_title, t)
 
     if NEUROVAE_TO_CLIP:
@@ -398,7 +428,10 @@ def main():
             num_steps=20
         )
 
-        torch.save(img_embeddings, os.path.join(ARTIFACTS_DIR, "img_embeddings_from_neurovae.pt"))
+        torch.save(
+            img_embeddings.to(torch.device('cpu')), 
+            os.path.join(ARTIFACTS_DIR, "img_embeddings_from_neurovae.pt")
+        )
 
         del neurovae_embeddings, img_embeddings # free up memory
         end_timed_block(block_title, t)
@@ -418,7 +451,7 @@ def main():
         )
 
         torch.save(
-            neurovae_embeddings, 
+            neurovae_embeddings.to(torch.device('cpu')), 
             os.path.join(ARTIFACTS_DIR, "neurovae_embeddings_from_img.pt")
         )
 
@@ -446,7 +479,7 @@ def main():
         # save reconstructed images to artifacts directory
         os.makedirs(ARTIFACTS_DIR, exist_ok=True)
         torch.save(
-            reconstructed_images, 
+            reconstructed_images.to(torch.device('cpu')), 
             os.path.join(ARTIFACTS_DIR, "reconstructed_images.pt")
         )
         # also save individual images as PNGs for easy viewing
@@ -480,7 +513,10 @@ def main():
             device=DEVICE
         )
 
-        torch.save(reconstructed_fmri, os.path.join(ARTIFACTS_DIR, "reconstructed_fmri.pt"))
+        torch.save(
+            reconstructed_fmri.to(torch.device('cpu')), 
+            os.path.join(ARTIFACTS_DIR, "reconstructed_fmri.pt")
+        )
         end_timed_block(block_title, t)
 
 if __name__ == "__main__":

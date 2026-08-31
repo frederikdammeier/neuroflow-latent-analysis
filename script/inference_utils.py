@@ -13,10 +13,14 @@ import torchvision.transforms.functional as TF
 import yaml
 import copy
 import time
+import kornia
 
 def get_image_paths(image_dir):
     """
-    Get all image paths from the given directory.
+    Get all image paths from the given directory. If the directory contains images with integer
+    Names (e.g., 0.png, 1.png, 2.png), they will be sorted in ascending order. If the directory
+    contains images with non-integer names, all files will be returned in the order they are
+    listed in the directory.
     """
     # handle the case where the image_dir is a single image path
     if os.path.isfile(image_dir):
@@ -26,10 +30,10 @@ def get_image_paths(image_dir):
         # we want the images to be sorted in ascending order, so we sort the list of image paths.
         try:
             image_ids = [
-                int(filename.split('.')[0]) 
+                int(filename.split('.')[0])
                 for filename in os.listdir(image_dir) 
                 if filename.endswith('.png')
-            ] 
+            ]
             image_ids.sort()
 
             return [os.path.join(image_dir, f"{image_id}.png") for image_id in image_ids]
@@ -39,20 +43,43 @@ def get_image_paths(image_dir):
             return [os.path.join(image_dir, filename) for filename in os.listdir(image_dir)]
         
 class CLIPImageDataset(Dataset):
-    def __init__(self, image_paths, transforms):
+    """
+    Directly taken from "data/extract_features_sdxl_unclip.py".
+    """
+    def __init__(self, image_paths):
         self.img_data = image_paths
-        self.transforms = transforms
 
     def __getitem__(self, idx):
-        img = Image.open(self.img_data[idx]).convert("RGB")
-        img = self.transforms(img)
+        img = Image.open(self.img_data[idx])
+        img = TF.to_tensor(img).float()
         return img
 
     def __len__(self):
         return len(self.img_data)
 
+def preprocess_image_for_clip(x):
+    """
+    Replicate the preprocessing pipeline used in the original NeuroFlow codebase.
+    """
+    # from generative_models.sgm.modules.encoders.modules.FrozenOpenCLIPImageEmbedder
+    mean = torch.Tensor([0.48145466, 0.4578275, 0.40821073]).to(x.device)
+    std = torch.Tensor([0.26862954, 0.26130258, 0.27577711]).to(x.device)
+
+    x = kornia.geometry.resize(
+        x,
+        (224, 224),
+        interpolation="bicubic",
+        align_corners=True,
+        antialias=True,
+    )
+    x = kornia.enhance.normalize(x, mean, std)
+
+    return x
+
 def load_pretrained_sdxl_unclip(
-        config_path: str = "/u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml",
+        config_path: str = \
+            "/u/fdammeier/repositories/NeuroFlow/script/" + \
+            "sdxl/generative_models/configs/unclip6.yaml",
         checkpoint_path: str = "/u/fdammeier/checkpoints/mindeyev2/unclip6_epoch0_step110000.ckpt",
         device: str = "cuda"
 ):
@@ -171,7 +198,6 @@ def unclip_recon(
         # samples = torch.clamp((samples_x + .5) / 2.0, min=0.0, max=1.0)
         return samples
 
-
 def load_neurovae(
         checkpoint_path: str, 
         config_path: str,
@@ -200,7 +226,6 @@ def load_neurovae(
     model.load_state_dict(checkpoint["model"])
 
     return model
-
 
 # logging untility
 def begin_timed_block(name):
