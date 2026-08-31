@@ -1,0 +1,37 @@
+# Inference configuration for NeuroFlow pipeline
+# General
+seed: 0
+device: cuda
+notes: ''
+root_dir: /u/fdammeier/artifacts
+
+# Data paths
+image_path: /u/fdammeier/repositories/NeuroFlow/sample_data/images
+fmri_zscores_path: /u/fdammeier/repositories/NeuroFlow/sample_data/fmri_zscores.pt
+
+# Latent paths
+image_embeddings_path: null
+neurovae_embeddings_path: null
+img_embeddings_from_neurovae_path: null
+neurovae_embeddings_from_img_path: null
+
+# Component settings
+clip:
+  model_name: ViT-bigG-14
+  pretrained_path: /u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_model.bin
+neurovae:
+  checkpoint_path: /u/fdammeier/checkpoints/train_logs/neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj/last.pth
+  config_path: /u/fdammeier/repositories/NeuroFlow/configs/neurovae.yaml
+unclip:
+  checkpoint_path: /u/fdammeier/checkpoints/mindeyev2/unclip6_epoch0_step110000.ckpt
+  config_path: /u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml
+xfm:
+  checkpoint_path: /u/fdammeier/checkpoints/train_logs/fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt
+
+# Run toggles
+encode_images: true       # Runs OpenCLIP encoder on images to get embeddings
+decode_images: true       # Runs SDXL UnCLIP decoder to reconstruct images from embeddings
+encode_fmri: true         # Runs NeuroVAE encoder on fMRI betas to get embeddings
+decode_fmri: true         # Runs NeuroVAE decoder on embeddings to get fMRI betas
+clip_to_neurovae: true    # Runs XFM to map OpenCLIP embeddings to NeuroVAE embeddings
+neurovae_to_clip: true    # Runs XFM to map NeuroVAE embeddings to OpenCLIP embeddings

@@ -41,4 +41,4 @@ cd /u/fdammeier/repositories/NeuroFlow/script
 source /u/fdammeier/repositories/NeuroFlow/venv/bin/activate
 
 # Run the program:
-srun python full_inference.py
+srun python full_inference.py --config /u/fdammeier/repositories/NeuroFlow/configs/inference.yaml

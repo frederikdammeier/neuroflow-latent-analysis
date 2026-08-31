@@ -8,69 +8,9 @@ we can easily run the entire thing for new images and capture relevant sections 
 The original repository (this folder) does this in a rather unintuitive way, by seperating out
 different aspects of the inference into different scripts. This script here is to be a unified
 entrypoint to do everything.
-"""
-# imports
-import random
-import numpy as np
-import torch
-from accelerate.utils import set_seed
-from torch.utils.data import DataLoader, Dataset
-from torchvision.transforms import Resize
-from tqdm import tqdm
-import os
-import open_clip
-from PIL import Image
 
-from inference_utils import get_image_paths, CLIPImageDataset, load_pretrained_sdxl_unclip, \
-    unclip_recon, load_neurovae, begin_timed_block, end_timed_block, preprocess_image_for_clip
-
-from vae_utils import requires_grad
-
-from xfm.sit import SiT
-from xfm.samplers import euler_sampler_fwd, euler_sampler_bwd
-
-# configs
-"""
-We're not getting around making this configurable, even though it's invevitably getting a bit
-messy.
-"""
-# Start by collecting relevant configs as constants, to be be extracted into a file
-# later on.
-# Generic
-SEED = 0 # same as in generate.py
-DEVICE = "cuda" # "cpu" or "cuda"
-ARTIFACTS_DIR = "/u/fdammeier/artifacts"
-
-# Images
-IMAGE_DIR = "/u/fdammeier/repositories/NeuroFlow/sample_data/images"
-IMAGE_PATHS = get_image_paths(IMAGE_DIR)
-
-# OpenCLIP
-OPENCLIP_MODEL_NAME = "ViT-bigG-14"
-OPENCLIP_PRETRAINED = "/u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_model.bin"
-
-# XFM
-XFM_CHECKPOINT_PATH = \
-    "/u/fdammeier/checkpoints/train_logs/" + \
-    "fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt"
-
-# NeuroVAE
-FMRI_ZSCORES_PATH = "/u/fdammeier/repositories/NeuroFlow/sample_data/fmri_zscores.pt"
-NEUROVAE_EMBEDDINGS_PATH = "/u/fdammeier/artifacts/neurovae_embeddings.pt"
-NEUROVAE_CONFIG_PATH = "/u/fdammeier/repositories/NeuroFlow/configs/neurovae.yaml"
-NEUROVAE_CHECKPOINT_PATH = \
-    "/u/fdammeier/checkpoints/train_logs/neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj/last.pth"
-
-# SDXL UnCLIP
-# SDXL can use any N x 256T x 1664D embeddings for conditioning.
-IMAGE_EMBEDDINGS_PATH = "/u/fdammeier/artifacts/img_embeddings.pt"
-SDXL_UNCLIP_CONFIG_PATH = \
-    "/u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml"
-SDXL_UNCLIP_CHECKPOINT_PATH = "/u/fdammeier/checkpoints/mindeyev2/unclip6_epoch0_step110000.ckpt"
-
-"""
-Booleans to toggle steps. Steps are arranged in a way that out of the box support the most common
-scenarios:
+Use the booleans in configs/inference.yaml to toggle different steps of the inference pipeline.
+The steps are arranged in a way that out of the box support the most common scenarios:
 - (1) Encode images -> XFM to NeuroVAE embeddings -> Decode fMRI
 - (2) Encode fMRI -> XFM to OpenCLIP embeddings -> Decode images
 - and both together in a single run of the script.
@@ -81,19 +21,31 @@ Scenarios like:
 
 are also supported, but have to be considered separately from (1) and (2).
 """
-ENCODE_IMAGES = True        # Runs OpenCLIP encoder on images to get embeddings
-DECODE_IMAGES = True        # Runs SDXL UnCLIP decoder on embeddings to get images
-ENCODE_FMRI = True          # Runs NeuroVAE encoder on fMRI scans to get embeddings
-DECODE_FMRI = True          # Runs NeuroVAE decoder on embeddings to get fMRI scansd
-NEUROVAE_TO_CLIP = True     # Runs XFM to map NeuroVAE embeddings to OpenCLIP embeddings
-CLIP_TO_NEUROVAE = True     # Runs XFM to map OpenCLIP embeddings to NeuroVAE embeddings
+# imports
+import argparse
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import Resize
+from tqdm import tqdm
+import os
+import open_clip
+from PIL import Image
 
+from inference_utils import get_image_paths, CLIPImageDataset, load_pretrained_sdxl_unclip, \
+    unclip_recon, load_neurovae, begin_timed_block, end_timed_block, preprocess_image_for_clip, \
+    Config, setup_run
+
+from vae_utils import requires_grad
+
+from xfm.sit import SiT
+from xfm.samplers import euler_sampler_fwd, euler_sampler_bwd
 
 def encode_images_with_openclip(
         image_paths: list,
-        model_name: str = OPENCLIP_MODEL_NAME,
-        pretrained: str = OPENCLIP_PRETRAINED,
-        device: str = DEVICE,
+        model_name: str,
+        pretrained: str,
+        device: str,
         batch_size: int = 32,
 ):
     """
@@ -156,9 +108,9 @@ def encode_images_with_openclip(
 
 def decode_embeddings_with_sdxl_unclip(
         embeddings: torch.Tensor,
-        config_path: str = SDXL_UNCLIP_CONFIG_PATH,
-        checkpoint_path: str = SDXL_UNCLIP_CHECKPOINT_PATH,
-        device: str = DEVICE,
+        config_path: str,
+        checkpoint_path: str,
+        device: str,
         batch_size: int = 32,
 ):
     """
@@ -221,9 +173,9 @@ def decode_embeddings_with_sdxl_unclip(
 
 def encode_fmri_with_neurovae(
         fmri_zscores: torch.Tensor,
-        checkpoint_path: str = NEUROVAE_CHECKPOINT_PATH,
-        config_path: str = NEUROVAE_CONFIG_PATH,
-        device: str = DEVICE,
+        checkpoint_path: str,
+        config_path: str,
+        device: str,
 ):
     """
     Encodes fMRI scans using NeuroVAE to obtain embeddings.
@@ -262,9 +214,9 @@ def encode_fmri_with_neurovae(
 
 def decode_fmri_with_neurovae(
         embeddings: torch.Tensor,
-        checkpoint_path: str = NEUROVAE_CHECKPOINT_PATH,
-        config_path: str = NEUROVAE_CONFIG_PATH,
-        device: str = DEVICE,
+        checkpoint_path: str,
+        config_path: str,
+        device: str,
 ):
     """
     Decodes NeuroVAE embeddings to fMRI scans.
@@ -302,9 +254,9 @@ def decode_fmri_with_neurovae(
 
 def cross_modal_flow_matching(
         embeddings_start: torch.Tensor,
-        direction: str = "forward", # "forward" or "backward"
-        checkpoint_path: str = XFM_CHECKPOINT_PATH,
-        device: str = DEVICE,
+        direction: str, # "forward" or "backward"
+        checkpoint_path: str,
+        device: str,
         num_steps: int = 20,
 ):
     """
@@ -356,46 +308,46 @@ def cross_modal_flow_matching(
     
     return sample
 
-def main():
+def main(config: Config, run_path: str):
     """
     Main function to run the full inference pipeline based on the specified configurations.
     """
-    set_seed(SEED)
 
     # Load models and checkpoints as needed based on the toggles
-    if ENCODE_IMAGES:
+    if config.encode_images:
         block_title = "Image encoding with OpenCLIP"
         t = begin_timed_block(block_title)
 
+        image_paths = get_image_paths(config.image_path)
+
         cls_embeddings, img_embeddings = encode_images_with_openclip(
-            IMAGE_PATHS,
-            model_name=OPENCLIP_MODEL_NAME,
-            pretrained=OPENCLIP_PRETRAINED,
-            device=DEVICE
+            image_paths,
+            model_name=config.clip.model_name,
+            pretrained=config.clip.pretrained_path,
+            device=config.device
         )
 
         print(f"Encoded {len(cls_embeddings)} images. CLS embeddings shape: "
               f"{cls_embeddings.shape}, Image token embeddings shape: {img_embeddings.shape}")
 
         # Save embeddings to artifacts directory
-        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
         torch.save(
             cls_embeddings.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "cls_embeddings.pt")
+            os.path.join(run_path, "cls_embeddings.pt")
         )
         torch.save(
             img_embeddings.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "img_embeddings.pt")
+            config.image_embeddings_path
         )
 
         del cls_embeddings, img_embeddings # free up memory
         end_timed_block(block_title, t)
 
-    if ENCODE_FMRI:
+    if config.encode_fmri:
         block_title = "fMRI encoding with NeuroVAE"
         t = begin_timed_block(block_title)
-        
-        fmri_zscores = torch.load(FMRI_ZSCORES_PATH).to(torch.float32) # ensure correct dtype
+
+        fmri_zscores = torch.load(config.fmri_zscores_path).to(torch.float32) # ensure correct dtype
 
         # fMRI is of shape N x T x V, where T is the number of trials (3).
         # While testing, we take the mean across trials to get a single representation per sample.
@@ -403,87 +355,92 @@ def main():
 
         neurovae_embeddings = encode_fmri_with_neurovae(
             fmri_zscores,
-            checkpoint_path=NEUROVAE_CHECKPOINT_PATH,
-            config_path=NEUROVAE_CONFIG_PATH,
-            device=DEVICE
+            checkpoint_path=config.neurovae.checkpoint_path,
+            config_path=config.neurovae.config_path,
+            device=config.device
         )
 
         torch.save(
             neurovae_embeddings.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "neurovae_embeddings.pt")
+            config.neurovae_embeddings_path
         )
         end_timed_block(block_title, t)
 
-    if NEUROVAE_TO_CLIP:
+    if config.neurovae_to_clip:
         block_title = "Mapping NeuroVAE embeddings to OpenCLIP embeddings with XFM"
         t = begin_timed_block(block_title)
 
-        neurovae_embeddings = torch.load(NEUROVAE_EMBEDDINGS_PATH).to(torch.float32)
+        assert os.path.exists(config.neurovae_embeddings_path), "NeuroVAE embeddings not found."
+        neurovae_embeddings = torch.load(config.neurovae_embeddings_path).to(torch.float32)
 
         img_embeddings = cross_modal_flow_matching(
             neurovae_embeddings,
             direction="backward",
-            checkpoint_path=XFM_CHECKPOINT_PATH,
-            device=DEVICE,
+            checkpoint_path=config.xfm.checkpoint_path,
+            device=config.device,
             num_steps=20
         )
 
         torch.save(
             img_embeddings.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "img_embeddings_from_neurovae.pt")
+            config.img_embeddings_from_neurovae_path
         )
 
         del neurovae_embeddings, img_embeddings # free up memory
         end_timed_block(block_title, t)
 
-    if CLIP_TO_NEUROVAE:
+    if config.clip_to_neurovae:
         block_title = "Mapping OpenCLIP embeddings to NeuroVAE embeddings with XFM"
         t = begin_timed_block(block_title)
-        
-        img_embeddings = torch.load(IMAGE_EMBEDDINGS_PATH).to(torch.float32)
+
+        assert os.path.exists(config.image_embeddings_path), "OpenCLIP image embeddings not found."
+        img_embeddings = torch.load(config.image_embeddings_path).to(torch.float32)
 
         neurovae_embeddings = cross_modal_flow_matching(
             img_embeddings,
             direction="forward",
-            checkpoint_path=XFM_CHECKPOINT_PATH,
-            device=DEVICE,
+            checkpoint_path=config.xfm.checkpoint_path,
+            device=config.device,
             num_steps=20
         )
 
         torch.save(
             neurovae_embeddings.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "neurovae_embeddings_from_img.pt")
+            config.neurovae_embeddings_from_img_path
         )
 
         del img_embeddings, neurovae_embeddings # free up memory
         end_timed_block(block_title, t)
 
-    if DECODE_IMAGES:
+    if config.decode_images:
         block_title = "Image decoding with SDXL UnCLIP"
         t = begin_timed_block(block_title)
 
+        assert os.path.exists(
+            config.img_embeddings_from_neurovae_path
+        ), "Image embeddings from NeuroVAE not found."
         img_embeddings = torch.load(
-            os.path.join(ARTIFACTS_DIR, "img_embeddings_from_neurovae.pt")
+            config.img_embeddings_from_neurovae_path
         ).to(torch.float32)
         
         reconstructed_images = decode_embeddings_with_sdxl_unclip(
             img_embeddings,
-            config_path=SDXL_UNCLIP_CONFIG_PATH,
-            checkpoint_path=SDXL_UNCLIP_CHECKPOINT_PATH,
-            device=DEVICE
+            config_path=config.unclip.config_path,
+            checkpoint_path=config.unclip.checkpoint_path,
+            device=config.device
         )
 
         print(f"Decoded {len(reconstructed_images)} images. "
                 f"Reconstructed images shape: {reconstructed_images.shape}")
 
         # save reconstructed images to artifacts directory
-        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+        os.makedirs(run_path, exist_ok=True)
         torch.save(
             reconstructed_images.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "reconstructed_images.pt")
+            os.path.join(run_path, "reconstructed_images.pt")
         )
         # also save individual images as PNGs for easy viewing
-        os.makedirs(os.path.join(ARTIFACTS_DIR, "reconstructed_images"), exist_ok=True)
+        os.makedirs(os.path.join(run_path, "reconstructed_images"), exist_ok=True)
 
         # beware of the image id - this might not be the same as the original,
         # as were're not keeping track.
@@ -491,33 +448,43 @@ def main():
             img = reconstructed_images[i].permute(1, 2, 0).cpu().numpy() # convert to HWC
             img = (img * 255).astype(np.uint8) # convert to uint8
             Image.fromarray(img).save(
-                os.path.join(ARTIFACTS_DIR, "reconstructed_images", f"{i}.png")
+                os.path.join(run_path, "reconstructed_images", f"{i}.png")
             )
             del img
 
         del img_embeddings, reconstructed_images # free up memory
         end_timed_block(block_title, t)
 
-    if DECODE_FMRI:
+    if config.decode_fmri:
         block_title = "fMRI decoding with NeuroVAE"
         t = begin_timed_block(block_title)
 
+        assert os.path.exists(
+            config.neurovae_embeddings_from_img_path
+        ), "NeuroVAE embeddings from images not found."
         neurovae_embeddings = torch.load(
-            os.path.join(ARTIFACTS_DIR, "neurovae_embeddings_from_img.pt")
+            config.neurovae_embeddings_from_img_path
         ).to(torch.float32)
 
         reconstructed_fmri = decode_fmri_with_neurovae(
             neurovae_embeddings,
-            checkpoint_path=NEUROVAE_CHECKPOINT_PATH,
-            config_path=NEUROVAE_CONFIG_PATH,
-            device=DEVICE
+            checkpoint_path=config.neurovae.checkpoint_path,
+            config_path=config.neurovae.config_path,
+            device=config.device
         )
 
         torch.save(
             reconstructed_fmri.to(torch.device('cpu')), 
-            os.path.join(ARTIFACTS_DIR, "reconstructed_fmri.pt")
+            os.path.join(run_path, "reconstructed_fmri.pt")
         )
         end_timed_block(block_title, t)
 
 if __name__ == "__main__":
-    main()
+    # argparse config file path
+    parser = argparse.ArgumentParser(description="Full inference pipeline for NeuroFlow")
+    parser.add_argument("--config_path", type=str, required=True, help="Path to the config file")
+    args = parser.parse_args()
+
+    config, run_path = setup_run(args.config_path)
+
+    main(config, run_path)

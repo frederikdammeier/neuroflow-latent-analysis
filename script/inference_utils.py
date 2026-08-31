@@ -3,8 +3,12 @@ Primarily thought of as an improvement to vae_utils.py, as many functions therei
 configurable enough.
 """
 # imports 
+import hashlib
 import os
+import subprocess
 import sys
+import dacite
+import datetime
 from omegaconf import OmegaConf
 import torch
 from torch.utils.data import Dataset
@@ -14,6 +18,127 @@ import yaml
 import copy
 import time
 import kornia
+from dataclasses import dataclass, asdict, field
+from accelerate.utils import set_seed
+
+@dataclass
+class CLIPConfig:
+    model_name: str = "ViT-bigG-14"
+    pretrained_path: str = "/u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_model.bin"
+
+@dataclass
+class NeuroVAEConfig:
+    config_path: str = "/u/fdammeier/repositories/NeuroFlow/configs/neurovae.yaml"
+    checkpoint_path: str = \
+    "/u/fdammeier/checkpoints/train_logs/neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj/last.pth"
+
+@dataclass
+class UNCLIPConfig:
+    config_path: str = \
+    "/u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml"
+    checkpoint_path: str = \
+    "/u/fdammeier/checkpoints/mindeyev2/unclip6_epoch0_step110000.ckpt"
+
+@dataclass
+class XFMConfig:
+    checkpoint_path: str = \
+    "/u/fdammeier/checkpoints/train_logs/" + \
+    "fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt"
+
+@dataclass
+class Config:
+    """
+    This class holds all configurables for full_inference.py.
+    
+    We adopt a light hierarchy do account for the modular nature of the inference pipeline.
+    Reproducability is ensured through run-specifc saving; changes can be made either here
+    or in dedicated yaml files.
+    """
+    # General settings
+    seed: int = 0
+    device: str = "cuda"
+    root_dir: str = "/u/fdammeier/artifacts"
+    notes: str = ""
+
+    # Data paths
+    image_path: str = "/u/fdammeier/repositories/NeuroFlow/sample_data/images"
+    fmri_zscores_path: str = "/u/fdammeier/repositories/NeuroFlow/sample_data/fmri_zscores.pt"
+
+    # Latent paths (if None - assumes default location based on root_dir)
+    image_embeddings_path: str | None = None
+    neurovae_embeddings_path: str | None = None
+    img_embeddings_from_neurovae_path: str | None = None
+    neurovae_embeddings_from_img_path: str | None = None
+
+    # Component settings
+    clip: CLIPConfig = field(default_factory=CLIPConfig)
+    neurovae: NeuroVAEConfig = field(default_factory=NeuroVAEConfig)
+    unclip: UNCLIPConfig = field(default_factory=UNCLIPConfig)
+    xfm: XFMConfig = field(default_factory=XFMConfig)
+
+    # Component toggles
+    encode_images: bool = True        # Runs OpenCLIP encoder on images to get embeddings
+    decode_images: bool = True        # Runs SDXL UnCLIP decoder on embeddings to get images
+    encode_fmri: bool = True          # Runs NeuroVAE encoder on fMRI scans to get embeddings
+    decode_fmri: bool = True          # Runs NeuroVAE decoder on embeddings to get fMRI scansd
+    neurovae_to_clip: bool = True     # Runs XFM to map NeuroVAE embeddings to OpenCLIP embeddings
+    clip_to_neurovae: bool = True     # Runs XFM to map OpenCLIP embeddings to NeuroVAE embeddings
+
+    def save(self, path: str):
+        with open(path, "w") as f:
+            yaml.dump(asdict(self), f)
+
+def setup_run(config_path: str):
+    with open(config_path, "r") as f:
+        config_dict = yaml.safe_load(f)
+    
+    config = dacite.from_dict(data_class=Config, data=config_dict)
+
+    set_seed(config.seed)
+
+    # Make run unique
+    time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    h = hashlib.new('sha256')
+    h.update(config_path.encode()) # if course this is not unique, but users are expected to know
+                                   # that is does not make sense to run the same config twice at
+                                   # the same time.
+    config_hash = h.hexdigest()[-6:]
+
+    run_id = f"full_inference_{time}_{config_hash}"
+
+    run_dir = os.path.join(config.root_dir, run_id)
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Set embedding default paths if not provided
+    if config.image_embeddings_path is None:
+        config.image_embeddings_path = os.path.join(run_dir, "image_embeddings.pt")
+    if config.neurovae_embeddings_path is None:
+        config.neurovae_embeddings_path = os.path.join(run_dir, "neurovae_embeddings.pt")
+    if config.img_embeddings_from_neurovae_path is None:
+        config.img_embeddings_from_neurovae_path = os.path.join(
+            run_dir, 
+            "img_embeddings_from_neurovae.pt"
+        )
+    if config.neurovae_embeddings_from_img_path is None:
+        config.neurovae_embeddings_from_img_path = os.path.join(
+            run_dir, 
+            "neurovae_embeddings_from_img.pt"
+        )
+
+    # Save config
+    config.save(os.path.join(run_dir, "config.yaml"))
+
+    # Save git state
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+        diff = subprocess.check_output(["git", "diff"]).decode()
+        with open(os.path.join(run_dir, "git_state.txt"), "w") as f:
+            f.write(f"commit: {commit}\n\n--- dirty diff ---\n{diff}")
+    except Exception:
+        pass  # not a git repo, or git not installed — don't crash the run over it
+
+    return config, run_dir
+
 
 def get_image_paths(image_dir):
     """
