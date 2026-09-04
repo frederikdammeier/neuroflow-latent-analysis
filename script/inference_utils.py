@@ -235,7 +235,7 @@ def load_pretrained_sdxl_unclip(
     offset_noise_level = unclip_params["loss_fn_config"]["params"]["offset_noise_level"]
 
     first_stage_config['target'] = 'sgm.models.autoencoder.AutoencoderKL'
-    sampler_config['params']['num_steps'] = 38
+    sampler_config['params']['num_steps'] = 38 # CAREFUL: THIS IS HARDCODED
 
     diffusion_engine = DiffusionEngine(network_config=network_config,
                         denoiser_config=denoiser_config,
