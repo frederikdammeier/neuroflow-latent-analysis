@@ -22,7 +22,7 @@ General options:
 - Inpainting occlusions
 
 Advanced options:
-- Segmentation-based occlusion - specifically occlude objects
+- Segmentation-based occlusion - specifically occlude objects (E.g. Meta's Segment Anything Model)
 - Use genAI to generate samples with certain desired properties.
 
 ## on fMRI Betas
