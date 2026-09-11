@@ -114,7 +114,7 @@ class DiffusionEngine(pl.LightningModule):
         # image tensors should be scaled to -1 ... 1 and in bchw format
         return batch[self.input_key]
 
-    @torch.no_grad()
+    # torch.no_grad() removed for gradient-based XAI 
     def decode_first_stage(self, z):
         z = 1.0 / self.scale_factor * z
         n_samples = default(self.en_and_decode_n_samples_a_time, z.shape[0])

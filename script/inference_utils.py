@@ -268,7 +268,8 @@ def unclip_recon(
         vector_suffix,
         num_samples=1, 
         offset_noise_level=0.04,
-        device="cuda"
+        device="cuda",
+        grad_enabled=True,
     ):
     # This unfortunate piece of code is necessary to avoid circular import issues when importing 
     # from sdxl.
@@ -283,7 +284,9 @@ def unclip_recon(
     assert x.ndim==3
     if x.shape[0]==1:
         x = x[[0]]
-    with torch.no_grad(), \
+
+    grad_ctx = torch.enable_grad() if grad_enabled else torch.no_grad()
+    with grad_ctx, \
          torch.amp.autocast('cuda', dtype=torch.float16), \
          diffusion_engine.ema_scope():
 
@@ -293,10 +296,16 @@ def unclip_recon(
         # clip_img_tokenized = clip_img_embedder(image) 
         # tokens = clip_img_tokenized
         tokens = x
-        c = {"crossattn": tokens.repeat(num_samples,1,1), "vector": vector_suffix.repeat(num_samples,1)}
+        c = {
+            "crossattn": tokens.repeat(num_samples,1,1), 
+            "vector": vector_suffix.repeat(num_samples,1)
+        }
 
         tokens = torch.randn_like(x)
-        uc = {"crossattn": tokens.repeat(num_samples,1,1), "vector": vector_suffix.repeat(num_samples,1)}
+        uc = {
+            "crossattn": tokens.repeat(num_samples,1,1), 
+            "vector": vector_suffix.repeat(num_samples,1)
+        }
 
         for k in c:
             c[k], uc[k] = map(lambda y: y[k][:num_samples].to(device), (c, uc))
