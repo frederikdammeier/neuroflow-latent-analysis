@@ -35,6 +35,11 @@ from inference_utils import get_image_paths, CLIPImageDataset, load_pretrained_s
 from xfm.sit import SiT
 from xfm.samplers import euler_sampler_fwd, euler_sampler_bwd
 
+from PIL import Image
+import torchvision.transforms.functional as TF
+
+from captum.attr import IntegratedGradients
+
 
 class Stage(Protocol):
     """A single differentiable model, split into a one-time `load` and a pure `forward`."""
@@ -242,8 +247,8 @@ def build_pipeline(config: Config) -> list[Stage]:
 
 
 def run_pipeline(
-        stages: list[Stage],
         x: torch.Tensor,
+        stages: list[Stage],
         device: str,
         taps: dict[str, torch.Tensor] | None = None,
 ) -> torch.Tensor:
@@ -274,23 +279,137 @@ def load_pipeline_input(config: Config, device: str) -> torch.Tensor:
         fmri_zscores = torch.load(config.fmri_zscores_path).to(torch.float32)
         return fmri_zscores.mean(dim=1).unsqueeze(1).to(device)  # average over trials, as before
 
+class MaskedMeanStage():
+    """Compute the mean of the input tensor `x` along the second dimension,
+    considering only the elements where `mask` is non-zero."""
+    name = "masked_mean"
+
+    def __init__(self, mask):
+        self.mask = mask
+
+    def load(self, device: str) -> None:
+        self.mask = self.mask.to(device)
+
+    def forward(self, x):
+        masked_x = x * self.mask
+        sum_masked_x = masked_x.sum(dim=-1)
+        sum_mask = self.mask.sum(dim=-1)
+        mean_masked_x = sum_masked_x / (sum_mask + 1e-8)
+        return mean_masked_x
+
+class MaskedRelativeMeanStage():
+    """Compute the mean of the input tensor `x` along the second dimension,
+    considering only the elements where `mask` is non-zero, 
+    and contrast it with the mean of all unmasked voxels."""
+    name = "masked_relative_mean"
+
+    def __init__(self, mask):
+        self.mask = mask
+
+    def load(self, device: str) -> None:
+        self.mask = self.mask.to(device)
+
+    def forward(self, x):
+        masked_x = x * self.mask
+        mean_masked_x = masked_x.sum(dim=-1) / (self.mask.sum(dim=-1) + 1e-8)
+
+        inverse_mask = 1 - self.mask
+        inverse_masked_x = x * inverse_mask
+        mean_inverse_masked_x = inverse_masked_x.sum(dim=-1) / (inverse_mask.sum(dim=-1) + 1e-8)
+        return mean_masked_x - mean_inverse_masked_x
+
+class MaskedPositiveMeanStage():
+    """Compute the mean of the positive elements of the input tensor `x` along the second
+    dimension, considering only the elements where `mask` is non-zero."""
+    name = "masked_positive_mean"
+
+    def __init__(self, mask):
+        self.mask = mask
+
+    def load(self, device: str) -> None:
+        self.mask = self.mask.to(device)
+
+    def forward(self, x):
+        masked_x = x * self.mask
+        masked_x = torch.clamp(masked_x, min=0)
+        sum_masked_x = masked_x.sum(dim=-1)
+        sum_mask = self.mask.sum(dim=-1)
+        mean_masked_x = sum_masked_x / (sum_mask + 1e-8)
+        return mean_masked_x
+
+class MaskedNegativeMeanStage():
+    """Compute the mean of the negative elements of the input tensor `x` along the second
+    dimension, considering only the elements where `mask` is non-zero."""
+    name = "masked_negative_mean"
+
+    def __init__(self, mask):
+        self.mask = mask
+
+    def load(self, device: str) -> None:
+        self.mask = self.mask.to(device)
+
+    def forward(self, x):
+        masked_x = x * self.mask
+        masked_x = torch.clamp(masked_x, max=0)
+        sum_masked_x = masked_x.sum(dim=-1)
+        sum_mask = self.mask.sum(dim=-1)
+        mean_masked_x = sum_masked_x / (sum_mask + 1e-8)
+        return mean_masked_x
 
 def main(config: Config, run_path: str):
+    ig_config = config.ig
+
+    roi_mask_tensor = torch.load(ig_config.roi_mask_dir)
+    
+    if ig_config.target == "masked_mean":
+        mms = MaskedMeanStage(roi_mask_tensor)
+    elif ig_config.target == "masked_positive_mean":
+        mms = MaskedPositiveMeanStage(roi_mask_tensor)
+    elif ig_config.target == "masked_negative_mean":
+        mms = MaskedNegativeMeanStage(roi_mask_tensor)
+    elif ig_config.target == "masked_relative_mean":
+        mms = MaskedRelativeMeanStage(roi_mask_tensor)
+    else:
+        raise ValueError(f"Unknown target: {ig_config.target}")
+
     stages = build_pipeline(config)
-    x = load_pipeline_input(config, config.device)
+    stages.append(mms)
+    # x = load_pipeline_input(config, config.device)
+    # x.requires_grad_(True)
+    # load XAI sample
+    img = Image.open(config.image_path)
+    x = torch.stack([TF.to_tensor(img)]).float().to(config.device)
     x.requires_grad_(True)
 
+    # load baseline
+    baseline = Image.open(ig_config.baseline_dir)
+    baseline = torch.stack([TF.to_tensor(baseline)]).float().to(config.device)
+    baseline.requires_grad_(True)
+
     taps: dict[str, torch.Tensor] = {}
-    output = run_pipeline(stages, x, config.device, taps=taps)
+
+    run_pipeline_parameterized = lambda x: run_pipeline(x, stages, config.device, taps=taps)
+
+    ig = IntegratedGradients(run_pipeline_parameterized)
+    attributions, delta = ig.attribute(
+        x, 
+        baselines=baseline,
+        n_steps=ig_config.n_steps,
+        internal_batch_size=ig_config.internal_batch_size,
+        return_convergence_delta=ig_config.return_convergence_delta)
+
+    # output = run_pipeline(x, stages, config.device, taps=taps)
 
     # demonstrates the pipeline is differentiable end to end; 
     # real XAI target functions replace this
-    output.sum().backward()
-    assert x.grad is not None, "Gradient did not reach the pipeline input."
+    # output.sum().backward()
+    # assert x.grad is not None, "Gradient did not reach the pipeline input."
 
     os.makedirs(run_path, exist_ok=True)
-    torch.save(output.detach().cpu(), os.path.join(run_path, "output.pt"))
-    torch.save(x.grad.detach().cpu(), os.path.join(run_path, "input_grad.pt"))
+    torch.save(attributions.detach().cpu(), os.path.join(run_path, "attributions.pt"))
+    torch.save(torch.tensor(delta).detach().cpu(), os.path.join(run_path, "delta.pt"))
+    # torch.save(output.detach().cpu(), os.path.join(run_path, "output.pt"))
+    # torch.save(x.grad.detach().cpu(), os.path.join(run_path, "input_grad.pt"))
     for name, tensor in taps.items():
         torch.save(tensor, os.path.join(run_path, f"{name}.pt"))
 

@@ -46,6 +46,17 @@ class XFMConfig:
     "fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt"
 
 @dataclass
+class IGConfig:
+    target: str = "masked_positive_mean"
+    roi_mask_dir: str = "/u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/" + \
+                   "2d_masks/subject_1/mask_bodies.pt"
+    baseline_dir: str = "/u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/" + \
+                          "image_data/1.png"
+    n_steps: int = 50
+    internal_batch_size: int = 2
+    return_convergence_delta: bool = True
+
+@dataclass
 class Config:
     """
     This class holds all configurables for full_inference.py.
@@ -75,6 +86,9 @@ class Config:
     neurovae: NeuroVAEConfig = field(default_factory=NeuroVAEConfig)
     unclip: UNCLIPConfig = field(default_factory=UNCLIPConfig)
     xfm: XFMConfig = field(default_factory=XFMConfig)
+
+    # XAI
+    ig: IGConfig = field(default_factory=IGConfig)
 
     # Component toggles
     encode_images: bool = True        # Runs OpenCLIP encoder on images to get embeddings
