@@ -1,0 +1,45 @@
+# Inference configuration for NeuroFlow pipeline
+# General
+seed: 0
+device: cuda
+notes: 'Integrated Gradients - Baseline: blurred, Steps: 50, Target: masked_relative_mean'
+root_dir: /u/fdammeier/artifacts
+
+# Data paths
+image_path: /u/fdammeier/repositories/NeuroFlow/experiments/occlusion/image_data/images_original/485.png
+fmri_zscores_path: /u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/single_fmri_sample.pt
+
+# Latent paths
+image_embeddings_path: null
+neurovae_embeddings_path: null
+img_embeddings_from_neurovae_path: null
+neurovae_embeddings_from_img_path: null
+
+# Component settings
+clip:
+  model_name: ViT-bigG-14
+  pretrained_path: /u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_model.bin
+neurovae:
+  checkpoint_path: /u/fdammeier/checkpoints/train_logs/neurovae-nsd-s1-bs64-d1664-zscore-v10-cycle-proj/last.pth
+  config_path: /u/fdammeier/repositories/NeuroFlow/configs/neurovae.yaml
+unclip:
+  checkpoint_path: /u/fdammeier/checkpoints/mindeyev2/unclip6_epoch0_step110000.ckpt
+  config_path: /u/fdammeier/repositories/NeuroFlow/script/sdxl/generative_models/configs/unclip6.yaml
+xfm:
+  checkpoint_path: /u/fdammeier/checkpoints/train_logs/fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt
+
+ig:
+  target: masked_relative_mean
+  roi_mask_dir: /u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/2d_masks/subject_1/mask_bodies.pt
+  baseline_dir: /u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/image_data/images_blur/485.png
+  n_steps: 50
+  internal_batch_size: 2
+  return_convergence_delta: true
+
+# Run toggles
+encode_images: true       # Runs OpenCLIP encoder on images to get embeddings
+decode_images: false      # Runs SDXL UnCLIP decoder to reconstruct images from embeddings
+encode_fmri: false         # Runs NeuroVAE encoder on fMRI betas to get embeddings
+decode_fmri: true         # Runs NeuroVAE decoder on embeddings to get fMRI betas
+clip_to_neurovae: true    # Runs XFM to map OpenCLIP embeddings to NeuroVAE embeddings
+neurovae_to_clip: false    # Runs XFM to map NeuroVAE embeddings to OpenCLIP embeddings
