@@ -48,6 +48,7 @@ class XFMConfig:
 @dataclass
 class IGConfig:
     target: str = "masked_positive_mean"
+    use_expected_gradients: bool = False
     roi_mask_dir: str = "/u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/" + \
                    "2d_masks/subject_1/mask_bodies.pt"
     baseline_dir: str = "/u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/" + \
@@ -384,3 +385,73 @@ def begin_timed_block(name):
 def end_timed_block(name, start_time):
     end_time = time.time()
     print(f"Finished '{name}' in {end_time - start_time:.2f} seconds.")
+
+import torch
+
+def expected_gradients(
+    pipeline,
+    x,                  # [C,H,W] the stimulus to explain
+    baseline_pool,      # [N,C,H,W]
+    k_samples=50,
+    batch_size=2,
+    device="cuda",
+):
+    
+    # pipeline.eval()
+    x = x.to(device)
+    attributions = torch.zeros_like(x)
+
+    n_batches = (k_samples + batch_size - 1) // batch_size
+    samples_done = 0
+
+    for _ in range(n_batches):
+        cur_bs = min(batch_size, k_samples - samples_done)
+
+        # sample baselines with replacement
+        idx = torch.randint(0, baseline_pool.shape[0], (cur_bs,))
+        x_baseline = baseline_pool[idx].to(device)          # [b,C,H,W]
+
+        # sample interpolation coefficients
+        alpha = torch.rand(cur_bs, 1, 1, 1, device=device)  # [b,1,1,1]
+
+        x_expanded = x.expand(cur_bs, -1, -1, -1)
+        x_interp = x_baseline + alpha * (x_expanded - x_baseline)
+        x_interp.requires_grad_(True)
+
+        preds = pipeline(x_interp)                # [b]
+
+        grads = torch.autograd.grad(
+            outputs=preds.sum(),
+            inputs=x_interp,
+            create_graph=False,
+        )[0]                                    # [b,C,H,W]
+
+        diff = (x_expanded - x_baseline)        # [b,C,H,W]
+        attributions += (diff * grads).sum(dim=0)
+
+        samples_done += cur_bs
+
+    attributions /= k_samples
+    return attributions.detach().cpu()
+
+def check_completeness(attributions, model, x, baseline_pool, target_fn, n_check=50, batch_size=2):
+    pred_x = target_fn(model(x.unsqueeze(0))).item()
+
+    # batched baseline predictions
+    baseline_preds = []
+
+    assert n_check <= baseline_pool.shape[0], \
+        "n_check cannot be larger than the number of available baselines."
+    assert n_check % batch_size == 0, "n_check must be a multiple of batch_size."
+
+
+    for i in range(0, n_check, batch_size):
+        batch = baseline_pool[i:i+batch_size]
+        baseline_preds.append(target_fn(model(batch)).mean())
+
+    baseline_preds = torch.stack(baseline_preds).mean()
+
+    lhs = attributions.sum().item()
+    rhs = pred_x - baseline_preds
+    print(f"sum(attributions) = {lhs:.4f}, F(x) - E[F(baseline)] = {rhs:.4f}")
+    return abs(lhs - rhs)

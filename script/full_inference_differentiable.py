@@ -30,7 +30,8 @@ import torch
 import open_clip
 
 from inference_utils import get_image_paths, CLIPImageDataset, load_pretrained_sdxl_unclip, \
-    unclip_recon, load_neurovae, preprocess_image_for_clip, Config, setup_run
+    unclip_recon, load_neurovae, preprocess_image_for_clip, Config, setup_run, \
+    expected_gradients
 
 from xfm.sit import SiT
 from xfm.samplers import euler_sampler_fwd, euler_sampler_bwd
@@ -381,22 +382,46 @@ def main(config: Config, run_path: str):
     x = torch.stack([TF.to_tensor(img)]).float().to(config.device)
     x.requires_grad_(True)
 
-    # load baseline
-    baseline = Image.open(ig_config.baseline_dir)
-    baseline = torch.stack([TF.to_tensor(baseline)]).float().to(config.device)
-    baseline.requires_grad_(True)
-
     taps: dict[str, torch.Tensor] = {}
-
     run_pipeline_parameterized = lambda x: run_pipeline(x, stages, config.device, taps=taps)
 
-    ig = IntegratedGradients(run_pipeline_parameterized)
-    attributions, delta = ig.attribute(
-        x, 
-        baselines=baseline,
-        n_steps=ig_config.n_steps,
-        internal_batch_size=ig_config.internal_batch_size,
-        return_convergence_delta=ig_config.return_convergence_delta)
+    if ig_config.use_expected_gradients:
+        # EG expects multiple images as baseline
+        baseline_pool = torch.stack(
+            [
+                TF.to_tensor(Image.open(img_dir))
+                for img_dir in get_image_paths(ig_config.baseline_dir)
+            ]
+        ).float().to(config.device)
+        baseline_pool.requires_grad_(True)
+
+        
+
+        attributions = expected_gradients(
+            run_pipeline_parameterized,
+            x,
+            baseline_pool,
+            k_samples=ig_config.n_steps,
+            batch_size=ig_config.internal_batch_size,
+            device=config.device
+        )
+
+        delta = 0.0 # TODO not implemented
+
+    else:
+        # load baseline
+        # IG expects single image baseline
+        baseline = Image.open(ig_config.baseline_dir)
+        baseline = torch.stack([TF.to_tensor(baseline)]).float().to(config.device)
+        baseline.requires_grad_(True)
+
+        ig = IntegratedGradients(run_pipeline_parameterized)
+        attributions, delta = ig.attribute(
+            x, 
+            baselines=baseline,
+            n_steps=ig_config.n_steps,
+            internal_batch_size=ig_config.internal_batch_size,
+            return_convergence_delta=ig_config.return_convergence_delta)
 
     # output = run_pipeline(x, stages, config.device, taps=taps)
 
