@@ -31,7 +31,7 @@ import open_clip
 
 from inference_utils import get_image_paths, CLIPImageDataset, load_pretrained_sdxl_unclip, \
     unclip_recon, load_neurovae, preprocess_image_for_clip, Config, setup_run, \
-    expected_gradients
+    expected_gradients, smooth_grad
 
 from xfm.sit import SiT
 from xfm.samplers import euler_sampler_fwd, euler_sampler_bwd
@@ -39,7 +39,7 @@ from xfm.samplers import euler_sampler_fwd, euler_sampler_bwd
 from PIL import Image
 import torchvision.transforms.functional as TF
 
-from captum.attr import IntegratedGradients
+from captum.attr import IntegratedGradients, Occlusion
 
 
 class Stage(Protocol):
@@ -358,60 +358,59 @@ class MaskedNegativeMeanStage():
         return mean_masked_x
 
 def main(config: Config, run_path: str):
-    ig_config = config.ig
+    xai_config = config.xai
 
-    roi_mask_tensor = torch.load(ig_config.roi_mask_dir)
+    roi_mask_tensor = torch.load(xai_config.roi_mask_dir)
     
-    if ig_config.target == "masked_mean":
+    if xai_config.target == "masked_mean":
         mms = MaskedMeanStage(roi_mask_tensor)
-    elif ig_config.target == "masked_positive_mean":
+    elif xai_config.target == "masked_positive_mean":
         mms = MaskedPositiveMeanStage(roi_mask_tensor)
-    elif ig_config.target == "masked_negative_mean":
+    elif xai_config.target == "masked_negative_mean":
         mms = MaskedNegativeMeanStage(roi_mask_tensor)
-    elif ig_config.target == "masked_relative_mean":
+    elif xai_config.target == "masked_relative_mean":
         mms = MaskedRelativeMeanStage(roi_mask_tensor)
     else:
-        raise ValueError(f"Unknown target: {ig_config.target}")
+        raise ValueError(f"Unknown target: {xai_config.target}")
 
     stages = build_pipeline(config)
     stages.append(mms)
-    # x = load_pipeline_input(config, config.device)
-    # x.requires_grad_(True)
+
     # load XAI sample
-    img = Image.open(config.image_path)
-    x = torch.stack([TF.to_tensor(img)]).float().to(config.device)
-    x.requires_grad_(True)
+    x = load_pipeline_input(config, config.device)
 
     taps: dict[str, torch.Tensor] = {}
     run_pipeline_parameterized = lambda x: run_pipeline(x, stages, config.device, taps=taps)
 
-    if ig_config.use_expected_gradients:
+    if xai_config.mode == "expected_gradients":
+        x.requires_grad_(True)
+
         # EG expects multiple images as baseline
         baseline_pool = torch.stack(
             [
                 TF.to_tensor(Image.open(img_dir))
-                for img_dir in get_image_paths(ig_config.baseline_dir)
+                for img_dir in get_image_paths(xai_config.baseline_dir)
             ]
         ).float().to(config.device)
-        baseline_pool.requires_grad_(True)
-
-        
+        baseline_pool.requires_grad_(True)        
 
         attributions = expected_gradients(
             run_pipeline_parameterized,
             x,
             baseline_pool,
-            k_samples=ig_config.n_steps,
-            batch_size=ig_config.internal_batch_size,
+            k_samples=xai_config.n_steps,
+            batch_size=xai_config.internal_batch_size,
             device=config.device
         )
 
         delta = 0.0 # TODO not implemented
 
-    else:
+    elif xai_config.mode == "integrated_gradients":
+        x.requires_grad_(True)
+
         # load baseline
         # IG expects single image baseline
-        baseline = Image.open(ig_config.baseline_dir)
+        baseline = Image.open(xai_config.baseline_dir)
         baseline = torch.stack([TF.to_tensor(baseline)]).float().to(config.device)
         baseline.requires_grad_(True)
 
@@ -419,16 +418,45 @@ def main(config: Config, run_path: str):
         attributions, delta = ig.attribute(
             x, 
             baselines=baseline,
-            n_steps=ig_config.n_steps,
-            internal_batch_size=ig_config.internal_batch_size,
-            return_convergence_delta=ig_config.return_convergence_delta)
+            n_steps=xai_config.n_steps,
+            internal_batch_size=xai_config.internal_batch_size,
+            return_convergence_delta=xai_config.return_convergence_delta)
+        
+    elif xai_config.mode == "smooth_grad":
+        attributions = []
 
-    # output = run_pipeline(x, stages, config.device, taps=taps)
+        for x_i in x:
+            # ensure batched format
+            x_i = x_i.unsqueeze(0)  # add batch dimension
+            x_i.requires_grad_(True)
+            attr = smooth_grad(
+                run_pipeline_parameterized,
+                x_i,
+                k_samples=xai_config.n_steps,
+                noise_level=xai_config.noise_level,
+                batch_size=xai_config.internal_batch_size,
+            )
+            attributions.append(attr)
 
-    # demonstrates the pipeline is differentiable end to end; 
-    # real XAI target functions replace this
-    # output.sum().backward()
-    # assert x.grad is not None, "Gradient did not reach the pipeline input."
+        attributions = torch.cat(attributions)
+        delta = 0.0 # TODO not implemented
+    elif xai_config.mode == "occlusion":
+        occlusion = Occlusion(run_pipeline_parameterized)
+
+        baseline = Image.open(xai_config.baseline_dir)
+        baseline = torch.stack([TF.to_tensor(baseline)]).float().to(config.device)
+        
+        with torch.no_grad():
+            attributions = occlusion.attribute(
+                x,
+                sliding_window_shapes=(3, 25, 25),
+                strides=(3, 25, 25),
+                baselines=baseline,
+                perturbations_per_eval=xai_config.internal_batch_size
+            )
+        delta = 0.0 # TODO not implemented
+    else:
+        raise ValueError(f"Unknown XAI mode: {xai_config.mode}")
 
     os.makedirs(run_path, exist_ok=True)
     torch.save(attributions.detach().cpu(), os.path.join(run_path, "attributions.pt"))

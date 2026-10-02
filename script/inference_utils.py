@@ -46,14 +46,15 @@ class XFMConfig:
     "fm-s1-d12-h13-bs24-v-cos-uni-d1664-zscore-v10-cycle-reverse-proj/last.pt"
 
 @dataclass
-class IGConfig:
+class XAIConfig:
     target: str = "masked_positive_mean"
-    use_expected_gradients: bool = False
+    mode: str = "smooth_grad" # supported: smooth_grad, integrated_gradients, expected_gradients
     roi_mask_dir: str = "/u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/" + \
                    "2d_masks/subject_1/mask_bodies.pt"
     baseline_dir: str = "/u/fdammeier/repositories/NeuroFlow/experiments/integrated_gradients/" + \
                           "image_data/1.png"
     n_steps: int = 50
+    noise_level: float = 0.1
     internal_batch_size: int = 2
     return_convergence_delta: bool = True
 
@@ -89,7 +90,7 @@ class Config:
     xfm: XFMConfig = field(default_factory=XFMConfig)
 
     # XAI
-    ig: IGConfig = field(default_factory=IGConfig)
+    xai: XAIConfig = field(default_factory=XAIConfig)
 
     # Component toggles
     encode_images: bool = True        # Runs OpenCLIP encoder on images to get embeddings
@@ -455,3 +456,55 @@ def check_completeness(attributions, model, x, baseline_pool, target_fn, n_check
     rhs = pred_x - baseline_preds
     print(f"sum(attributions) = {lhs:.4f}, F(x) - E[F(baseline)] = {rhs:.4f}")
     return abs(lhs - rhs)
+
+def smooth_grad(
+    pipeline,
+    x,
+    k_samples=50,
+    noise_level=0.1,
+    batch_size=2        
+):
+    """
+    Compute SmoothGrad attributions for the input `x` with respect to the `pipeline`.
+
+    Args:
+        pipeline: The model or pipeline to explain.
+        x: The input tensor to explain.
+        k_samples: Number of noisy samples to average over.
+        noise_level: Standard deviation of the Gaussian noise added to `x`.
+        batch_size: Batch size for processing the noisy samples.
+
+    Returns:
+        attributions: SmoothGrad attributions for the input `x`.
+    """
+    device = x.device
+    attributions = torch.zeros_like(x)
+
+    n_batches = (k_samples + batch_size - 1) // batch_size
+    samples_done = 0
+
+    # determine true noise level relative to the input's scale
+    noise_level = noise_level * (x.max() - x.min()).item()
+
+    for _ in range(n_batches):
+        cur_bs = min(batch_size, k_samples - samples_done)
+
+        noise = torch.randn_like(x).to(device) * noise_level
+        x_noisy = x + noise
+        x_noisy = x_noisy.expand(cur_bs, -1, -1, -1)
+        x_noisy.requires_grad_(True)
+
+        preds = pipeline(x_noisy)                # [b]
+
+        grads = torch.autograd.grad(
+            outputs=preds.sum(),
+            inputs=x_noisy,
+            create_graph=False,
+        )[0]                                    # [b,C,H,W]
+
+        attributions += (grads).sum(dim=0)
+
+        samples_done += cur_bs
+
+    attributions /= k_samples
+    return attributions.detach().cpu()
