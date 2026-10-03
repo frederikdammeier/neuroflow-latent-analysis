@@ -185,6 +185,7 @@ if __name__ == "__main__":
     MODEL_NAME = "ViT-bigG-14"          # replace with your model
     PRETRAINED = "/u/fdammeier/checkpoints/mindeyev2/open_clip_pytorch_model.bin"  # replace with your checkpoint/tag or local path
     IMAGE_PATH = "/u/fdammeier/repositories/NeuroFlow/sample_data/images/63.png"        # replace with your image
+    IMAGE_DIR = "/u/fdammeier/repositories/NeuroFlow/experiments/occlusion/image_data/images_original"
     TARGET_IDX = 0                       # 0=CLS, 1..N=patches
 
     model, _, preprocess = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=PRETRAINED)
@@ -194,11 +195,11 @@ if __name__ == "__main__":
     hooker.register()
 
     # read image ids from filenames
-    image_ids = [int(filename.split('.')[0]) for filename in os.listdir('../sample_data/images') if filename.endswith('.png')]
+    image_ids = [int(filename.split('.')[0]) for filename in os.listdir(IMAGE_DIR) if filename.endswith('.png')]
     image_ids.sort()  # sort to ensure consistent order
 
     # create a list of image paths
-    image_paths = [os.path.join('../sample_data/images', f"{image_id}.png") for image_id in image_ids]
+    image_paths = [os.path.join(IMAGE_DIR, f"{image_id}.png") for image_id in image_ids]
 
     # img = Image.open(IMAGE_PATH).convert("RGB")
     # pixel_values = preprocess(img).unsqueeze(0)
@@ -207,7 +208,7 @@ if __name__ == "__main__":
     #     image_features = model.encode_image(pixel_values)  # image latent, unaffected by hooks
 
     # hooker.remove()  # restore fast/fused inference for any subsequent calls
-    images = [Image.open(p).convert("RGB") for p in image_paths[:5]]
+    images = [Image.open(p).convert("RGB") for p in image_paths[-5:]]
 
     pixel_values = torch.stack([preprocess(image) for image in images])  # [B, 3, H, W]
 
